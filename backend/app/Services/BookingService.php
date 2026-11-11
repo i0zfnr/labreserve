@@ -14,6 +14,11 @@ class BookingService {
   $expired = Booking::where('lab_id',$labId)->where('status','pending')->whereNotNull('expires_at')->where('expires_at','<=',now())->get();
   foreach ($expired as $booking) { $old=$booking->getAttributes(); $booking->update(['status'=>'expired']); $this->audit($booking,null,'expired',$old); }
  }
+ public function expireDueForLab(int $labId): void {
+  DB::transaction(function () use ($labId) {
+   if (Lab::whereKey($labId)->lockForUpdate()->first()) $this->expire($labId);
+  }, 3);
+ }
  private function conflict(int $labId, CarbonImmutable $start, CarbonImmutable $end, ?int $exclude = null): void {
   $overlap = Booking::where('lab_id',$labId)->whereIn('status',['pending','confirmed'])->where('start_at','<',$end)->where('end_at','>',$start)->when($exclude,fn($q)=>$q->where('id','!=',$exclude))->exists();
   $closure = DB::table('lab_closures')->where('lab_id',$labId)->where('start_at','<',$end)->where('end_at','>',$start)->exists();
@@ -36,7 +41,7 @@ class BookingService {
    if (!$hours || $hours->is_closed || $localStart->format('H:i:s')<$hours->opens_at || $localEnd->format('H:i:s')>$hours->closes_at) throw ValidationException::withMessages(['start_at'=>'The laboratory is outside its configured operating hours.']);
    $minutes=$start->diffInMinutes($end); if ($minutes>480) throw ValidationException::withMessages(['end_at'=>'Bookings may not exceed eight hours.']);
    $reasons=[]; if ($lab->booking_mode !== 'automatic') $reasons[]='Restricted laboratory'; if ($minutes>120) $reasons[]='Longer than the automatic approval threshold'; if (!empty($data['special_event'])) $reasons[]='Special event';
-   $booking=Booking::create(['booking_reference'=>'LR-'.strtoupper(Str::random(10)),'user_id'=>$user->id,'lab_id'=>$lab->id,'subject'=>$data['subject'],'purpose'=>$data['purpose'],'expected_students'=>$data['expected_students'] ?? null,'notes'=>$data['notes'] ?? null,'start_at'=>$start,'end_at'=>$end,'status'=>$reasons?'pending':'confirmed','approval_required'=>(bool)$reasons,'approval_reason'=>$reasons?implode('; ',$reasons):null,'expires_at'=>$reasons?now()->addHours(24):null]);
+   $booking=Booking::create(['booking_reference'=>'LR-'.strtoupper(Str::random(10)),'user_id'=>$user->id,'lab_id'=>$lab->id,'subject'=>$data['subject'],'purpose'=>$data['purpose'],'expected_students'=>$data['expected_students'] ?? null,'notes'=>$data['notes'] ?? null,'start_at'=>$start,'end_at'=>$end,'status'=>$reasons?'pending':'confirmed','approval_required'=>(bool)$reasons,'approval_reason'=>$reasons?implode('; ',$reasons):null,'expires_at'=>$reasons?min(now()->addHours(24),$start):null]);
    $this->audit($booking,$user,'created'); return $booking->load('lab');
   },3);
  }

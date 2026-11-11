@@ -32,4 +32,8 @@ npm run dev -- --host 127.0.0.1
 
 Open the Vite URL printed by npm using `127.0.0.1` consistently; Vite proxies API and Sanctum requests to port 8000. To run checks: `cd backend; php vendor/bin/phpunit --configuration phpunit.mysql.xml` and `cd frontend; npm run build`. The MySQL test configuration uses `labreserve_test` and resets its tables; never point it at a database containing data you need. Create that separate database before running the tests.
 
-The account creation UI, password reset and lecturer management have not been implemented. The local seed administrator is for development only.
+Administrators can create, enable, and disable lecturer accounts from the Lecturers screen. Password reset and self-service password changes are not implemented; use this development build only. The local seed administrator is for development only.
+
+Run `php artisan schedule:work` in a separate backend terminal to expire pending holds every minute. On a server, run Laravel's scheduler every minute with cron. Pending holds also expire when another booking operation locks the same lab.
+
+For systems where port 8000 is reserved, run the API on port 9000 with `php artisan serve --host=127.0.0.1 --port=9000`. Before starting Vite, set `$env:VITE_API_PROXY_TARGET="http://127.0.0.1:9000"`; then run `npm run dev -- --host 127.0.0.1 --port 5174`.

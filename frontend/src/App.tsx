@@ -1,35 +1,377 @@
-import { useState, type FormEvent } from 'react'
+import { lazy, Suspense, useState, type FormEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
-import { CalendarDays, Building2, LayoutDashboard, LogOut, Plus, ShieldCheck, Clock3, ArrowRight } from 'lucide-react'
 import { Toaster, toast } from 'sonner'
+import type { User, Lab, Booking } from './types'
+import { parseApiError } from './utils/format'
+
+import { Sidebar } from './components/Sidebar'
+import { Header } from './components/Header'
+import { Overview } from './components/Overview'
+import { Laboratories } from './components/Laboratories'
+import { LabManagement } from './components/LabManagement'
+const Availability = lazy(() => import('./components/Availability').then(module => ({ default: module.Availability })))
+import { BookingsList } from './components/BookingsList'
+import { Approvals } from './components/Approvals'
+import { NewBookingView } from './components/NewBookingView'
+import { AuthModal } from './components/AuthModal'
+import { RejectModal } from './components/RejectModal'
+import { LabStatusModal } from './components/LabStatusModal'
+import Lecturers from './Lecturers'
 
 axios.defaults.withCredentials = true
 axios.defaults.withXSRFToken = true
 axios.defaults.headers.common.Accept = 'application/json'
-const api = '/api/v1'
-type User = { id:number; name:string; role:string; email:string }
-type Lab = { id:number; name:string; code:string; building:string; capacity:number; booking_mode:string }
-type Booking = { id:number; booking_reference:string; subject:string; start_at:string; end_at:string; status:string; approval_reason:string|null; lab:Lab; user?:User }
-const date = (v:string) => new Intl.DateTimeFormat('en-MY',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Kuala_Lumpur'}).format(new Date(v))
-const error = (e:unknown) => { if (axios.isAxiosError(e)) { const d=e.response?.data; return Object.values(d?.errors ?? {}).flat().join(' ') || d?.message || 'Unable to complete the request.' } return 'Unable to complete the request.' }
-function App() {
- const qc=useQueryClient(); const [page,setPage]=useState('overview'); const [login,setLogin]=useState(false)
- const me=useQuery<User|null>({queryKey:['me'],queryFn:async()=>{try{return (await axios.get(api+'/auth/me')).data.data}catch{return null}},retry:false})
- const labs=useQuery<Lab[]>({queryKey:['labs',!!me.data],queryFn:async()=>(await axios.get(api+(me.data?'/labs':'/public/labs'))).data.data})
- const bookings=useQuery<Booking[]>({queryKey:['bookings'],queryFn:async()=>(await axios.get(api+'/bookings')).data.data,enabled:!!me.data})
- const approvals=useQuery<Booking[]>({queryKey:['approvals'],queryFn:async()=>(await axios.get(api+'/admin/approvals')).data.data,enabled:me.data?.role==='admin'})
- const refresh=()=>{qc.invalidateQueries({queryKey:['bookings']});qc.invalidateQueries({queryKey:['approvals']})}
- async function signIn(e:FormEvent<HTMLFormElement>){ e.preventDefault();const f=new FormData(e.currentTarget);try{await axios.get('/sanctum/csrf-cookie');await axios.post(api+'/auth/login',{email:f.get('email'),password:f.get('password')});await qc.invalidateQueries({queryKey:['me']});setLogin(false);toast.success('Welcome back')}catch(err){toast.error(error(err))} }
- async function signOut(){try{await axios.post(api+'/auth/logout');qc.clear();setPage('overview')}catch(err){toast.error(error(err))}}
- async function book(e:FormEvent<HTMLFormElement>){e.preventDefault();const form=e.currentTarget;const f=new FormData(form);try{await axios.post(api+'/bookings',{lab_id:Number(f.get('lab_id')),subject:f.get('subject'),purpose:f.get('purpose'),start_at:String(f.get('start_at'))+':00+08:00',end_at:String(f.get('end_at'))+':00+08:00',expected_students:Number(f.get('expected_students'))||null,special_event:f.get('special_event')==='on'}).then(r=>toast.success(`Request ${r.data.data.booking_reference}: ${r.data.data.status}`));form.reset();refresh();setPage('bookings')}catch(err){toast.error(error(err))}}
- async function action(b:Booking,kind:string){if(kind==='cancel'&&!confirm('Cancel this booking?'))return;let reason='';if(kind==='reject'){reason=prompt('Reason for rejection:')?.trim()||'';if(!reason)return}try{await axios.post(api+(kind==='cancel'?`/bookings/${b.id}/cancel`:`/admin/approvals/${b.id}/${kind}`),{reason});toast.success('Booking updated');refresh()}catch(err){toast.error(error(err))}}
- const rows=(items:Booking[],admin=false)=>items.length?<div className="table-wrap"><table><thead><tr><th>Session</th><th>Laboratory</th><th>Schedule (MYT)</th><th>Status</th><th>Action</th></tr></thead><tbody>{items.map(b=><tr key={b.id}><td><strong>{b.subject}</strong><small>{b.booking_reference}{admin&&b.user?` · ${b.user.name}`:''}</small>{admin&&b.approval_reason&&<small>{b.approval_reason}</small>}</td><td>{b.lab?.name}</td><td>{date(b.start_at)}<small>until {date(b.end_at)}</small></td><td><span className={'badge '+b.status}>{b.status}</span></td><td>{admin?<div className="row-actions"><button onClick={()=>action(b,'approve')}>Approve</button><button onClick={()=>action(b,'reject')}>Reject</button></div>:['pending','confirmed'].includes(b.status)?<button className="text-button" onClick={()=>action(b,'cancel')}>Cancel</button>:null}</td></tr>)}</tbody></table></div>:<div className="empty"><CalendarDays size={25}/><strong>Nothing here yet</strong><span>Reservations will appear here when they are created.</span></div>
- return <div className="shell"><aside><div className="brand"><span className="brand-icon"><CalendarDays size={20}/></span><div>LabReserve<small>SPACE TO LEARN</small></div></div><div className="side-label">WORKSPACE</div><nav><button className={page==='overview'?'active':''} onClick={()=>setPage('overview')}><LayoutDashboard/> Overview</button><button className={page==='labs'?'active':''} onClick={()=>setPage('labs')}><Building2/> Laboratories</button>{me.data&&<><button className={page==='bookings'?'active':''} onClick={()=>setPage('bookings')}><CalendarDays/> {me.data.role==='admin'?'All bookings':'My bookings'}</button>{me.data.role==='admin'&&<button className={page==='approvals'?'active':''} onClick={()=>setPage('approvals')}><ShieldCheck/> Approvals <span className="nav-count">{approvals.data?.length||0}</span></button>}</>}</nav><div className="side-bottom"><div className="side-note"><Clock3 size={18}/><span>Times shown in<br/><b>Malaysia time (MYT)</b></span></div>{me.data?<button className="logout" onClick={signOut}><LogOut size={17}/> Sign out</button>:<button className="logout" onClick={()=>setLogin(true)}>Sign in <ArrowRight size={17}/></button>}</div></aside><main><header><div className="crumb">LabReserve <span>/</span> {page==='overview'?'Overview':page==='labs'?'Laboratories':page==='new'?'New booking':page==='approvals'?'Approvals':'Bookings'}</div><div className="header-right"><span className="live-dot"/> {me.data?me.data.name:'Public view'} <span className="avatar">{me.data?.name?.charAt(0)||'G'}</span></div></header><div className="content"><div className="page-heading"><div><div className="eyebrow">LABORATORY MANAGEMENT</div><h1>{page==='overview'?'Your space to plan.':page==='labs'?'Explore laboratories':page==='new'?'Make a reservation':page==='approvals'?'Approval requests':'Reservations'}</h1><p>{page==='overview'?'A clear view of your laboratories and upcoming sessions.':page==='new'?'Request a time that works for your class.':page==='approvals'?'Review requests that need a decision.':page==='labs'?'Find the right space for your next session.':'Keep track of your scheduled sessions.'}</p></div>{me.data&&page!=='new'&&<button className="primary" onClick={()=>setPage('new')}><Plus size={17}/> New booking</button>}</div>
- {page==='overview'&&<><div className="stats"><article><span>Active laboratories</span><strong>{labs.data?.length??'—'}</strong><small>Spaces in your directory</small><Building2/></article><article><span>{me.data?.role==='admin'?'Bookings':'Your bookings'}</span><strong>{me.data?(bookings.data?.length??'—'):'—'}</strong><small>{me.data?'Visible reservations':'Sign in to view'}</small><CalendarDays/></article><article><span>Pending approvals</span><strong>{me.data?.role==='admin'?(approvals.data?.length??'—'):'—'}</strong><small>Awaiting a decision</small><Clock3/></article></div><div className="section-head"><div><h2>Laboratories</h2><p>Browse the spaces available for teaching.</p></div><button className="text-button" onClick={()=>setPage('labs')}>View all <ArrowRight size={15}/></button></div><div className="lab-grid">{labs.data?.slice(0,3).map(l=><LabCard lab={l} key={l.id}/>)}</div>{me.data&&<><div className="section-head"><div><h2>Recent reservations</h2><p>Your latest booking activity.</p></div><button className="text-button" onClick={()=>setPage('bookings')}>View all <ArrowRight size={15}/></button></div>{rows((bookings.data||[]).slice(0,5))}</>}</>}
- {page==='labs'&&<div className="lab-grid">{labs.data?.map(l=><LabCard lab={l} key={l.id}/>)}</div>}{page==='bookings'&&rows(bookings.data||[])}{page==='approvals'&&rows(approvals.data||[],true)}
- {page==='new'&&<form className="form-card" onSubmit={book}><h2>Session details</h2><p>All times are in Asia/Kuala_Lumpur. Requests are checked when submitted.</p><div className="form-grid"><label>Laboratory<select name="lab_id" required defaultValue=""><option value="" disabled>Select a laboratory</option>{labs.data?.map(l=><option key={l.id} value={l.id}>{l.name} · {l.capacity} seats</option>)}</select></label><label>Subject or class<input name="subject" required maxLength={255} placeholder="e.g. Introduction to Computing"/></label><label>Start<input name="start_at" type="datetime-local" required/></label><label>End<input name="end_at" type="datetime-local" required/></label><label>Expected students<input name="expected_students" type="number" min="1" placeholder="Number of students"/></label><label className="checkbox"><input type="checkbox" name="special_event"/> This is a special event</label><label className="wide">Purpose<textarea name="purpose" required placeholder="Describe the session"/></label></div><div className="form-footer"><button type="button" className="secondary" onClick={()=>setPage('overview')}>Cancel</button><button className="primary">Submit request <ArrowRight size={16}/></button></div></form>}
- {labs.isError&&<div className="error">Could not load laboratories. Check that the API is running.</div>}{labs.isLoading&&<p>Loading laboratories…</p>}</div></main><Toaster richColors position="top-right"/>{login&&<div className="overlay" onClick={()=>setLogin(false)}><form className="modal" onSubmit={signIn} onClick={e=>e.stopPropagation()}><div className="eyebrow">WELCOME BACK</div><h2>Sign in to LabReserve</h2><p>Use your institution account to manage bookings.</p><label>Email<input name="email" type="email" required autoFocus/></label><label>Password<input name="password" type="password" required/></label><div className="form-footer"><button type="button" className="secondary" onClick={()=>setLogin(false)}>Close</button><button className="primary">Sign in</button></div></form></div>}</div>
+
+const API_BASE = '/api/v1'
+
+export default function App() {
+  const qc = useQueryClient()
+  const [currentPage, setCurrentPage] = useState<string>('overview')
+  const [mobileNavOpen, setMobileNavOpen] = useState<boolean>(false)
+  const [loginModalOpen, setLoginModalOpen] = useState<boolean>(false)
+  const [selectedLabForBooking, setSelectedLabForBooking] = useState<Lab | null>(null)
+  const [selectedPeriod, setSelectedPeriod] = useState<{ start: string; end: string } | null>(null)
+  const [statusModalLab, setStatusModalLab] = useState<Lab | null>(null)
+  const [rejectModalBooking, setRejectModalBooking] = useState<Booking | null>(null)
+  const [cancelTargetBooking, setCancelTargetBooking] = useState<Booking | null>(null)
+
+  // Current authenticated user session
+  const me = useQuery<User | null>({
+    queryKey: ['me'],
+    queryFn: async () => {
+      try {
+        const res = await axios.get(`${API_BASE}/auth/me`)
+        return res.data.data
+      } catch {
+        return null
+      }
+    },
+    retry: false,
+  })
+
+  const currentUser = me.data
+  const isAdmin = currentUser?.role === 'admin'
+
+  // Laboratories Directory
+  const labs = useQuery<Lab[]>({
+    queryKey: ['labs', !!currentUser],
+    queryFn: async () => {
+      const endpoint = currentUser ? `${API_BASE}/labs` : `${API_BASE}/public/labs`
+      const res = await axios.get(endpoint)
+      return res.data.data
+    },
+  })
+
+  // Bookings list (for lecturers and admin)
+  const bookings = useQuery<Booking[]>({
+    queryKey: ['bookings'],
+    queryFn: async () => {
+      const res = await axios.get(`${API_BASE}/bookings`)
+      return res.data.data
+    },
+    enabled: !!currentUser,
+  })
+
+  // Pending Approvals queue (Admin only)
+  const approvals = useQuery<Booking[]>({
+    queryKey: ['approvals'],
+    queryFn: async () => {
+      const res = await axios.get(`${API_BASE}/admin/approvals`)
+      return res.data.data
+    },
+    enabled: isAdmin,
+  })
+
+  const refreshBookingData = () => {
+    qc.invalidateQueries({ queryKey: ['bookings'] })
+    qc.invalidateQueries({ queryKey: ['approvals'] })
+  }
+
+  // Auth: Sign In
+  async function handleSignIn(e: FormEvent<HTMLFormElement>) {
+    const form = new FormData(e.currentTarget)
+    try {
+      await axios.get('/sanctum/csrf-cookie')
+      await axios.post(`${API_BASE}/auth/login`, {
+        email: form.get('email'),
+        password: form.get('password'),
+      })
+      await qc.invalidateQueries({ queryKey: ['me'] })
+      setLoginModalOpen(false)
+      toast.success('Signed in successfully. Welcome back to LabReserve.')
+    } catch (err) {
+      throw new Error(parseApiError(err))
+    }
+  }
+
+  // Auth: Sign Out
+  async function handleSignOut() {
+    try {
+      await axios.post(`${API_BASE}/auth/logout`)
+      qc.clear()
+      setCurrentPage('overview')
+      toast.success('Signed out of LabReserve.')
+    } catch (err) {
+      toast.error(parseApiError(err))
+    }
+  }
+
+  // Action: Create Reservation
+  async function handleCreateBooking(e: FormEvent<HTMLFormElement>) {
+    const form = e.currentTarget
+    const f = new FormData(form)
+
+    const labIdVal = Number(f.get('lab_id'))
+    const startAtRaw = String(f.get('start_at'))
+    const endAtRaw = String(f.get('end_at'))
+
+    // Append Asia/Kuala_Lumpur offset (+08:00) as required by backend regex
+    const startAt = `${startAtRaw}:00+08:00`
+    const endAt = `${endAtRaw}:00+08:00`
+
+    try {
+      const res = await axios.post(`${API_BASE}/bookings`, {
+        lab_id: labIdVal,
+        subject: f.get('subject'),
+        purpose: f.get('purpose'),
+        start_at: startAt,
+        end_at: endAt,
+        expected_students: Number(f.get('expected_students')) || null,
+        special_event: f.get('special_event') === 'on',
+      })
+
+      const newBooking = res.data.data
+      toast.success(
+        `Reservation ${newBooking.booking_reference} confirmed with status: ${newBooking.status}`
+      )
+      form.reset()
+      setSelectedLabForBooking(null)
+      refreshBookingData()
+      setCurrentPage('bookings')
+    } catch (err) {
+      toast.error(parseApiError(err))
+      throw err
+    }
+  }
+
+  // Action: Cancel Booking
+  async function handleConfirmCancel() {
+    if (!cancelTargetBooking) return
+    try {
+      await axios.post(`${API_BASE}/bookings/${cancelTargetBooking.id}/cancel`, {
+        reason: 'Cancelled by user request',
+      })
+      toast.success(`Booking ${cancelTargetBooking.booking_reference} was cancelled.`)
+      setCancelTargetBooking(null)
+      refreshBookingData()
+    } catch (err) {
+      toast.error(parseApiError(err))
+    }
+  }
+
+  // Action: Approve Booking (Admin)
+  async function handleApproveBooking(b: Booking) {
+    try {
+      await axios.post(`${API_BASE}/admin/approvals/${b.id}/approve`)
+      toast.success(`Reservation ${b.booking_reference} approved.`)
+      refreshBookingData()
+    } catch (err) {
+      toast.error(parseApiError(err))
+    }
+  }
+
+  // Action: Reject Booking (Admin)
+  async function handleRejectBooking(b: Booking, reason: string) {
+    try {
+      await axios.post(`${API_BASE}/admin/approvals/${b.id}/reject`, { reason })
+      toast.success(`Reservation ${b.booking_reference} has been rejected.`)
+      refreshBookingData()
+    } catch (err) {
+      toast.error(parseApiError(err))
+      throw err
+    }
+  }
+
+  // Quick Action: Preselect Lab and Navigate to Booking Form
+  function handleSelectLabForBooking(lab: Lab) {
+    if (!currentUser) {
+      setLoginModalOpen(true)
+      return
+    }
+    setSelectedPeriod(null)
+    setSelectedLabForBooking(lab)
+    setCurrentPage('new')
+  }
+
+  return (
+    <div className="min-h-screen flex bg-[#f5f8f6] text-[#13221e]">
+      {/* Sidebar Navigation */}
+      <Sidebar
+        currentPage={currentPage}
+        onSelectPage={setCurrentPage}
+        currentUser={currentUser}
+        approvalsCount={approvals.data?.length || 0}
+        onOpenLogin={() => setLoginModalOpen(true)}
+        onSignOut={handleSignOut}
+        mobileOpen={mobileNavOpen}
+        onCloseMobile={() => setMobileNavOpen(false)}
+      />
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col min-w-0">
+        <Header
+          currentPage={currentPage}
+          currentUser={currentUser}
+          onOpenMobileNav={() => setMobileNavOpen(true)}
+          onNewBooking={() => {
+            setSelectedPeriod(null)
+            setSelectedLabForBooking(null)
+            setCurrentPage('new')
+          }}
+        />
+
+        <main className="flex-1 p-4 sm:p-8 max-w-7xl w-full mx-auto">
+          {/* Overview Screen */}
+          {currentPage === 'overview' && (
+            <Overview
+              currentUser={currentUser}
+              labs={labs.data}
+              bookings={bookings.data}
+              approvals={approvals.data}
+              isLoadingLabs={labs.isLoading}
+              isLoadingBookings={bookings.isLoading}
+              onNavigate={setCurrentPage}
+              onSelectLabForBooking={handleSelectLabForBooking}
+              onCheckStatus={setStatusModalLab}
+              onCancelBooking={setCancelTargetBooking}
+            />
+          )}
+
+          {/* Laboratories Directory Screen */}
+          {currentPage === 'labs' && (
+            <Laboratories
+              labs={labs.data}
+              isLoading={labs.isLoading}
+              isError={labs.isError}
+              onSelectLabForBooking={handleSelectLabForBooking}
+              onCheckStatus={setStatusModalLab}
+            />
+          )}
+
+          {currentPage === 'manage-labs' && isAdmin && <LabManagement />}
+
+          {currentPage === 'availability' && <Suspense fallback={<p>Loading calendar…</p>}><Availability labs={labs.data || []} authenticated={!!currentUser} onBook={(lab, period) => { setSelectedLabForBooking(lab); setSelectedPeriod(period); setCurrentPage('new') }} /></Suspense>}
+
+          {/* Bookings Management Screen */}
+          {currentPage === 'bookings' && (
+            <BookingsList
+              bookings={bookings.data}
+              currentUser={currentUser}
+              isLoading={bookings.isLoading}
+              isError={bookings.isError}
+              onCancelBooking={setCancelTargetBooking}
+              onNewBooking={() => {
+                setSelectedLabForBooking(null)
+                setCurrentPage('new')
+              }}
+            />
+          )}
+
+          {/* Approvals Screen (Admin Only) */}
+          {currentPage === 'approvals' && isAdmin && (
+            <Approvals
+              approvals={approvals.data}
+              isLoading={approvals.isLoading}
+              isError={approvals.isError}
+              onApprove={handleApproveBooking}
+              onOpenRejectModal={setRejectModalBooking}
+            />
+          )}
+
+          {/* Lecturers Management Screen (Admin Only) */}
+          {currentPage === 'lecturers' && isAdmin && <Lecturers />}
+
+          {/* New Reservation Screen */}
+          {currentPage === 'new' && (
+            <NewBookingView
+              labs={labs.data}
+              selectedLabId={selectedLabForBooking?.id}
+              initialStart={selectedPeriod?.start}
+              initialEnd={selectedPeriod?.end}
+              onSubmitBooking={handleCreateBooking}
+              onCancel={() => setCurrentPage('overview')}
+            />
+          )}
+        </main>
+      </div>
+
+      {/* Toaster for Toast Notifications */}
+      <Toaster richColors position="top-right" />
+
+      {/* Auth Modal */}
+      <AuthModal
+        isOpen={loginModalOpen}
+        onClose={() => setLoginModalOpen(false)}
+        onSignIn={handleSignIn}
+      />
+
+      {/* Live Lab Status Modal */}
+      <LabStatusModal
+        lab={statusModalLab}
+        isOpen={!!statusModalLab}
+        onClose={() => setStatusModalLab(null)}
+        onReserve={handleSelectLabForBooking}
+      />
+
+      {/* Rejection Decision Modal */}
+      <RejectModal
+        booking={rejectModalBooking}
+        isOpen={!!rejectModalBooking}
+        onClose={() => setRejectModalBooking(null)}
+        onConfirmReject={handleRejectBooking}
+      />
+
+      {/* Cancellation Confirmation Modal */}
+      {cancelTargetBooking && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="fixed inset-0 bg-[#0c241e]/60 backdrop-blur-xs transition-opacity"
+            onClick={() => setCancelTargetBooking(null)}
+            aria-hidden="true"
+          />
+
+          <div className="relative w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl border border-[#e2ece7] animate-fade-in z-10">
+            <h3 className="font-heading font-bold text-base text-[#13221e]">
+              Cancel Reservation?
+            </h3>
+            <p className="mt-2 text-xs text-[#556c64] leading-relaxed">
+              Are you sure you want to cancel booking <strong>{cancelTargetBooking.booking_reference}</strong> ({cancelTargetBooking.subject})? This time slot will immediately become available to other faculty.
+            </p>
+
+            <div className="mt-5 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setCancelTargetBooking(null)}
+                className="rounded-lg border border-[#d6e2dc] bg-white px-3.5 py-1.5 text-xs font-semibold text-[#486057] hover:bg-[#f3f8f5]"
+              >
+                Keep Booking
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmCancel}
+                className="rounded-lg bg-[#b03838] px-4 py-1.5 text-xs font-bold text-white hover:bg-[#942d2d] transition-colors"
+              >
+                Confirm Cancellation
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
-function LabCard({lab}:{lab:Lab}){return <article className="lab-card"><div className="lab-top"><div className="lab-symbol"><Building2 size={22}/></div><span className="code">{lab.code}</span></div><h3>{lab.name}</h3><p>{lab.building}</p><div className="lab-footer"><span>{lab.capacity} seats</span><span>{lab.booking_mode==='approval'?'Approval required':'Bookable lab'}</span></div></article>}
-export default App
