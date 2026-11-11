@@ -16,6 +16,7 @@ import { Approvals } from './components/Approvals'
 import { NewBookingView } from './components/NewBookingView'
 import { AuthModal } from './components/AuthModal'
 import { RejectModal } from './components/RejectModal'
+import { RescheduleModal } from './components/RescheduleModal'
 import { LabStatusModal } from './components/LabStatusModal'
 import Lecturers from './Lecturers'
 
@@ -35,6 +36,7 @@ export default function App() {
   const [statusModalLab, setStatusModalLab] = useState<Lab | null>(null)
   const [rejectModalBooking, setRejectModalBooking] = useState<Booking | null>(null)
   const [cancelTargetBooking, setCancelTargetBooking] = useState<Booking | null>(null)
+  const [rescheduleTarget, setRescheduleTarget] = useState<Booking | null>(null)
 
   // Current authenticated user session
   const me = useQuery<User | null>({
@@ -86,6 +88,8 @@ export default function App() {
   const refreshBookingData = () => {
     qc.invalidateQueries({ queryKey: ['bookings'] })
     qc.invalidateQueries({ queryKey: ['approvals'] })
+    qc.invalidateQueries({ queryKey: ['calendar'] })
+    qc.invalidateQueries({ queryKey: ['lab-status'] })
   }
 
   // Auth: Sign In
@@ -152,6 +156,17 @@ export default function App() {
     } catch (err) {
       toast.error(parseApiError(err))
       throw err
+    }
+  }
+
+  async function handleReschedule(booking: Booking, start: string, end: string) {
+    try {
+      const result = await axios.patch(`${API_BASE}/bookings/${booking.id}`, { start_at: `${start}:00+08:00`, end_at: `${end}:00+08:00` })
+      toast.success(`Reservation updated: ${result.data.data.status}`)
+      setRescheduleTarget(null)
+      refreshBookingData()
+    } catch (err) {
+      throw new Error(parseApiError(err))
     }
   }
 
@@ -271,6 +286,7 @@ export default function App() {
               isLoading={bookings.isLoading}
               isError={bookings.isError}
               onCancelBooking={setCancelTargetBooking}
+              onRescheduleBooking={setRescheduleTarget}
               onNewBooking={() => {
                 setSelectedLabForBooking(null)
                 setCurrentPage('new')
@@ -331,6 +347,8 @@ export default function App() {
         onClose={() => setRejectModalBooking(null)}
         onConfirmReject={handleRejectBooking}
       />
+
+      {rescheduleTarget && <RescheduleModal booking={rescheduleTarget} onClose={() => setRescheduleTarget(null)} onSubmit={handleReschedule} />}
 
       {/* Cancellation Confirmation Modal */}
       {cancelTargetBooking && (

@@ -12,6 +12,7 @@ Route::prefix('v1')->group(function () {
  Route::middleware('auth:sanctum')->group(function () {
   Route::get('/auth/me',[ApiController::class,'me']); Route::post('/auth/logout',[ApiController::class,'logout']);
   Route::get('/labs',[ApiController::class,'labs']); Route::get('/bookings',[ApiController::class,'bookings']); Route::post('/bookings',[ApiController::class,'createBooking']);
+  Route::patch('/bookings/{booking}',[ApiController::class,'reschedule']);
   Route::post('/bookings/{booking}/cancel',[ApiController::class,'cancel']);
   Route::get('/admin/approvals',[ApiController::class,'approvals']); Route::post('/admin/approvals/{booking}/approve',[ApiController::class,'approve']); Route::post('/admin/approvals/{booking}/reject',[ApiController::class,'reject']);
   Route::get('/admin/lecturers',[LecturerController::class,'index']); Route::post('/admin/lecturers',[LecturerController::class,'store']); Route::patch('/admin/lecturers/{user}',[LecturerController::class,'update']);

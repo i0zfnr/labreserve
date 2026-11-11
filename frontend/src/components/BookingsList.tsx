@@ -17,6 +17,7 @@ interface BookingsListProps {
   isLoading: boolean
   isError: boolean
   onCancelBooking: (booking: Booking) => void
+  onRescheduleBooking: (booking: Booking) => void
   onNewBooking: () => void
 }
 
@@ -26,6 +27,7 @@ export function BookingsList({
   isLoading,
   isError,
   onCancelBooking,
+  onRescheduleBooking,
   onNewBooking,
 }: BookingsListProps) {
   const isAdmin = currentUser?.role === 'admin'
@@ -229,6 +231,9 @@ export function BookingsList({
                       </span>
                     </td>
                     <td className="table-body-cell text-right">
+                      {['pending', 'confirmed'].includes(b.status) && new Date(b.start_at) > new Date() && (
+                        <button type="button" onClick={() => onRescheduleBooking(b)} className="rounded-md px-2.5 py-1 text-xs font-semibold text-[#164e43] hover:bg-[#eaf4f0]">Reschedule</button>
+                      )}
                       {['pending', 'confirmed'].includes(b.status) && (
                         <button
                           type="button"
@@ -290,7 +295,8 @@ export function BookingsList({
                 </div>
 
                 {['pending', 'confirmed'].includes(b.status) && (
-                  <div className="pt-2 border-t border-[#edf3f0] flex justify-end">
+                  <div className="pt-2 border-t border-[#edf3f0] flex justify-end gap-4">
+                    {new Date(b.start_at) > new Date() && <button type="button" onClick={() => onRescheduleBooking(b)} className="text-xs font-bold text-[#164e43] hover:underline">Reschedule</button>}
                     <button
                       type="button"
                       onClick={() => onCancelBooking(b)}

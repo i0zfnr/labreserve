@@ -11,7 +11,12 @@ while (!file_exists($gate) && microtime(true) < $deadline) usleep(10000);
 if (!file_exists($gate)) { fwrite(STDERR, 'Timed out waiting for test barrier'); exit(2); }
 try {
     $user = App\Models\User::findOrFail($userId);
-    app(App\Services\BookingService::class)->create($user, ['lab_id' => $labId, 'subject' => 'Concurrency test', 'purpose' => 'Test', 'start_at' => $start, 'end_at' => $end]);
+    $service = app(App\Services\BookingService::class);
+    if (isset($argv[8])) {
+        $service->reschedule(App\Models\Booking::findOrFail($argv[8]), $user, ['start_at'=>$start, 'end_at'=>$end]);
+    } else {
+        $service->create($user, ['lab_id' => $labId, 'subject' => 'Concurrency test', 'purpose' => 'Test', 'start_at' => $start, 'end_at' => $end]);
+    }
     echo 'created';
 } catch (Symfony\Component\HttpKernel\Exception\HttpException $e) {
     echo 'http:'.$e->getStatusCode();

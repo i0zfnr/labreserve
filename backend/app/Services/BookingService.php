@@ -28,21 +28,43 @@ class BookingService {
   $recurring=DB::table('recurring_schedules')->where('lab_id',$labId)->where('weekday',$localStart->dayOfWeek)->where('effective_from','<=',$localStart->toDateString())->where('effective_until','>=',$localStart->toDateString())->where('start_time','<',$localEnd->format('H:i:s'))->where('end_time','>',$localStart->format('H:i:s'))->exists();
   if ($recurring) abort(409,'The laboratory has a recurring session during this period.');
  }
+ private function evaluate(Lab $lab, CarbonImmutable $start, CarbonImmutable $end, ?int $students, bool $specialEvent, ?int $exclude = null): array {
+  if (!$lab->is_active) abort(403,'Laboratory is inactive.');
+  if ($start->lessThanOrEqualTo(now()) || $end->lessThanOrEqualTo($start)) throw ValidationException::withMessages(['start_at'=>'Choose a future start and a later end.']);
+  if (($students ?? 0)>$lab->capacity) throw ValidationException::withMessages(['expected_students'=>'The class exceeds laboratory capacity.']);
+  $this->conflict($lab->id,$start,$end,$exclude);
+  $localStart=$start->setTimezone('Asia/Kuala_Lumpur'); $localEnd=$end->setTimezone('Asia/Kuala_Lumpur');
+  $hours=DB::table('lab_operating_hours')->where('lab_id',$lab->id)->where('weekday',$localStart->dayOfWeek)->first();
+  if (!$hours || $hours->is_closed || !$hours->opens_at || !$hours->closes_at || $localStart->format('H:i:s')<$hours->opens_at || $localEnd->format('H:i:s')>$hours->closes_at) throw ValidationException::withMessages(['start_at'=>'The laboratory is outside its configured operating hours.']);
+  $minutes=$start->diffInMinutes($end); if ($minutes>480) throw ValidationException::withMessages(['end_at'=>'Bookings may not exceed eight hours.']);
+  $reasons=[]; if ($lab->booking_mode !== 'automatic') $reasons[]='Restricted laboratory'; if ($minutes>120) $reasons[]='Longer than the automatic approval threshold'; if ($specialEvent) $reasons[]='Special event';
+  return $reasons;
+ }
  public function create(User $user,array $data): Booking {
   return DB::transaction(function () use ($user,$data) {
    $lab=Lab::whereKey($data['lab_id'])->lockForUpdate()->firstOrFail(); $this->expire($lab->id);
-   if (!$lab->is_active || !$user->is_active) abort(403,'Account or laboratory is inactive.');
+   if (!$user->is_active) abort(403,'Account is inactive.');
    $start=CarbonImmutable::parse($data['start_at'])->utc(); $end=CarbonImmutable::parse($data['end_at'])->utc();
-   if ($start->isPast() || $end->lessThanOrEqualTo($start)) throw ValidationException::withMessages(['start_at'=>'Choose a future start and a later end.']);
-   if (($data['expected_students'] ?? 0)>$lab->capacity) throw ValidationException::withMessages(['expected_students'=>'The class exceeds laboratory capacity.']);
-   $this->conflict($lab->id,$start,$end);
-   $localStart=$start->setTimezone('Asia/Kuala_Lumpur'); $localEnd=$end->setTimezone('Asia/Kuala_Lumpur');
-   $hours=DB::table('lab_operating_hours')->where('lab_id',$lab->id)->where('weekday',$localStart->dayOfWeek)->first();
-   if (!$hours || $hours->is_closed || $localStart->format('H:i:s')<$hours->opens_at || $localEnd->format('H:i:s')>$hours->closes_at) throw ValidationException::withMessages(['start_at'=>'The laboratory is outside its configured operating hours.']);
-   $minutes=$start->diffInMinutes($end); if ($minutes>480) throw ValidationException::withMessages(['end_at'=>'Bookings may not exceed eight hours.']);
-   $reasons=[]; if ($lab->booking_mode !== 'automatic') $reasons[]='Restricted laboratory'; if ($minutes>120) $reasons[]='Longer than the automatic approval threshold'; if (!empty($data['special_event'])) $reasons[]='Special event';
+   $reasons=$this->evaluate($lab,$start,$end,$data['expected_students'] ?? null,(bool)($data['special_event'] ?? false));
    $booking=Booking::create(['booking_reference'=>'LR-'.strtoupper(Str::random(10)),'user_id'=>$user->id,'lab_id'=>$lab->id,'subject'=>$data['subject'],'purpose'=>$data['purpose'],'expected_students'=>$data['expected_students'] ?? null,'notes'=>$data['notes'] ?? null,'start_at'=>$start,'end_at'=>$end,'status'=>$reasons?'pending':'confirmed','approval_required'=>(bool)$reasons,'approval_reason'=>$reasons?implode('; ',$reasons):null,'expires_at'=>$reasons?min(now()->addHours(24),$start):null]);
    $this->audit($booking,$user,'created'); return $booking->load('lab');
+  },3);
+ }
+ public function reschedule(Booking $booking, User $actor, array $data): Booking {
+  return DB::transaction(function () use ($booking,$actor,$data) {
+   $lab=Lab::whereKey($booking->lab_id)->lockForUpdate()->firstOrFail();
+   $this->expire($lab->id);
+   $booking=Booking::whereKey($booking->id)->lockForUpdate()->firstOrFail();
+   if (!$actor->is_active || ($actor->role!=='admin' && $booking->user_id!==$actor->id)) abort(403);
+   if (!in_array($booking->status,['pending','confirmed'],true) || $booking->start_at->lessThanOrEqualTo(now())) abort(409,'Only future active bookings can be rescheduled.');
+   $start=CarbonImmutable::parse($data['start_at'])->utc(); $end=CarbonImmutable::parse($data['end_at'])->utc();
+   $reasons=$this->evaluate($lab,$start,$end,$booking->expected_students,false,$booking->id);
+   // Any previously required approval must be reviewed again after rescheduling.
+   if ($booking->approval_required && !$reasons) $reasons[]='Previously required approval';
+   $old=$booking->getAttributes();
+   $booking->update(['start_at'=>$start,'end_at'=>$end,'status'=>$reasons?'pending':'confirmed','approval_required'=>(bool)$reasons,'approval_reason'=>$reasons?implode('; ',$reasons):null,'reviewed_by'=>null,'reviewed_at'=>null,'rejection_reason'=>null,'expires_at'=>$reasons?min(now()->addHours(24),$start):null]);
+   $this->audit($booking,$actor,'rescheduled',$old);
+   return $booking->load('lab','user');
   },3);
  }
  public function transition(Booking $booking,User $actor,string $action,?string $reason=null): Booking {

@@ -31,6 +31,11 @@ class ApiController extends Controller {
   $d=$r->validate(['lab_id'=>'required|integer|exists:labs,id','subject'=>'required|string|max:255','purpose'=>'required|string|max:3000','start_at'=>['required','date','regex:/\\d{4}-\\d{2}-\\d{2}T.*(Z|[+-]\\d{2}:\\d{2})$/'],'end_at'=>['required','date','regex:/\\d{4}-\\d{2}-\\d{2}T.*(Z|[+-]\\d{2}:\\d{2})$/'],'expected_students'=>'nullable|integer|min:1','notes'=>'nullable|string|max:3000','special_event'=>'sometimes|boolean']);
   return response()->json(['data'=>$service->create($r->user(),$d)],201);
  }
+ public function reschedule(Request $r,Booking $booking,BookingService $service) {
+  $rules=['required','date','regex:/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?(Z|[+-]\\d{2}:\\d{2})$/'];
+  $data=$r->validate(['start_at'=>$rules,'end_at'=>$rules]);
+  return ['data'=>$service->reschedule($booking,$r->user(),$data)];
+ }
  public function cancel(Request $r,Booking $booking,BookingService $service) { abort_unless($r->user()->is_active,403); return ['data'=>$service->transition($booking,$r->user(),'cancel')]; }
  public function approvals(Request $r) { $this->admin($r); return Booking::with('lab','user')->where('status','pending')->orderBy('created_at')->paginate(50); }
  public function approve(Request $r,Booking $booking,BookingService $service) { $this->admin($r); return ['data'=>$service->transition($booking,$r->user(),'approve')]; }
